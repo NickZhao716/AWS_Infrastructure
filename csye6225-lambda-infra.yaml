@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AWS Serverless
+Parameters:
+  s3Bucket:
+    Default: static-website7-s3bucketforlambda-ziokj7p2ffdz
+    Description: S3 bucket for lambda artifact
+    Type: String
+  SNSTopic:
+    Default: arn:aws:sns:us-west-1:879472848592:verify_email
+    Description: SNS topic ARN
+    Type: String
+  URLAddr:
+    Description: URL address
+    Type: String
+    Default: demo.ethflybear.com.
+    ConstraintDescription: URL 
+Resources:
+  Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      MemorySize: 512
+      FunctionName: AWSLambda
+      Handler: index.handler
+      Role: !GetAtt [LambdaIAMRole, Arn]
+      Code:
+        ZipFile: |
+          var aws = require('aws-sdk');
+          var ses = new aws.SES({region: 'us-west-1'});
+          exports.handler = (event, context, callback) => {
+              sendMail("Sample Subject", "Sample Body",event);
+          };
+
+          async function sendMail(subject, data,event) {
+            var mes = event.Records[0].Sns.Message;
+            var arr = mes.split(',')
+            var email = arr[0]
+            var url = arr[1]
+            const emailParams = {
+                  Destination: {
+                    ToAddresses: [email],
+                  },
+                  Message: {
+                    Body: {
+                      Text: { Data: url },
+                    },
+                    Subject: { Data: subject },
+                  },
+                  Source: "awsdemoacchk@gmail.com",
+            };
+              
+            try {
+                  let key = await ses.sendEmail(emailParams).promise();
+                  console.log("MAIL SENT SUCCESSFULLY!!");      
+            } catch (e) {
+                  console.log("FAILURE IN SENDING MAIL!!", e);
+                }  
+            return;
+          }
+      Runtime: nodejs12.x
+      Timeout: 25
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          DYNAMO_TABLE: csye6225
+          DOMAIN_NAME: !Ref URLAddr
+  LambdaSNSSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: Lambda
+    Properties:
+      Endpoint: !GetAtt [Lambda, Arn]
+      Protocol: Lambda
+      TopicArn: !Ref SNSTopic
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Lambda
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SNSTopic
+  LambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: LambdaIAMRole
+  LambdaSESPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: LambdaSESPolicy
+      PolicyDocument:
+        {
+          "Version": "2012-10-17",
+          "Statement":
+            [
+              {
+                "Effect": "Allow",
+                "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+                "Resource": "*",
+              },
+            ],
+        }
+      Roles: [!Ref LambdaIAMRole]
